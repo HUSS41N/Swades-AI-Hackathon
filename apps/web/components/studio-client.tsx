@@ -78,7 +78,7 @@ function StudioColumn({
       <div
         className={
           bodyScroll
-            ? "min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-4"
+            ? "flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-4"
             : "flex min-h-0 flex-1 flex-col overflow-hidden p-4"
         }
       >
@@ -457,10 +457,10 @@ export function StudioClient({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-4">
-        <div className="mx-auto flex h-full min-h-0 min-w-[min(100%,52rem)] max-w-6xl gap-6">
+      <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto p-4">
+        <div className="mx-auto flex h-full min-h-0 w-full min-w-[min(100%,52rem)] max-w-6xl gap-6">
           <StudioColumn bodyScroll={false} title="Live">
-            <div className="mb-4 flex shrink-0 gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1">
+            <div className="mb-3 flex shrink-0 gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1">
               <button
                 className={`flex-1 rounded-lg px-4 py-2.5 font-medium text-sm transition ${
                   liveMode === "chunk"
@@ -487,10 +487,6 @@ export function StudioClient({
 
             {liveMode === "chunk" ? (
               <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-                <p className="mb-3 shrink-0 text-slate-600 text-sm leading-relaxed">
-                  Microphone → 1 s audio frames → 5 s rolling window →
-                  transcription → merged text below.
-                </p>
                 <ChunkedTranscriptionPanel
                   apiBaseUrl={apiBaseUrl}
                   apiReachable={apiReachable}
@@ -500,21 +496,8 @@ export function StudioClient({
                 />
               </div>
             ) : (
-              <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-                <p className="mb-3 shrink-0 text-slate-600 text-sm leading-relaxed">
-                  Record one clip, then send the whole file as{" "}
-                  <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs">
-                    whisper-1
-                  </code>
-                  . Optional live captions in Chrome or Edge.
-                </p>
-                <canvas
-                  className="mb-4 h-28 w-full shrink-0 rounded-xl border border-slate-200 bg-slate-50"
-                  height={112}
-                  ref={canvasRef}
-                  width={640}
-                />
-                <div className="mb-4 flex shrink-0 flex-wrap gap-2">
+              <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-3">
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
                   {!recording ? (
                     <Button
                       disabled={busy}
@@ -534,39 +517,58 @@ export function StudioClient({
                     </Button>
                   )}
                   {whisperLoading ? (
-                    <span className="self-center text-slate-500 text-sm">
-                      Transcribing…
-                    </span>
+                    <span className="text-slate-500 text-sm">Transcribing…</span>
                   ) : null}
+                  <p className="min-w-0 flex-1 text-slate-500 text-xs leading-snug">
+                    One take →{" "}
+                    <code className="rounded bg-slate-100 px-1 font-mono">
+                      whisper-1
+                    </code>
+                    . Captions optional (Chrome / Edge).
+                  </p>
                 </div>
-                <div className="flex min-h-0 flex-1 flex-col gap-4">
-                  <div className="flex min-h-0 min-h-[8rem] flex-1 flex-col rounded-xl border border-slate-200 bg-slate-50/90 p-4">
-                    <h3 className="shrink-0 font-medium text-slate-700 text-xs uppercase tracking-wide">
-                      Browser caption
-                    </h3>
-                    <p className="mt-2 min-h-0 flex-1 overflow-y-auto text-slate-800 text-sm leading-relaxed">
-                      {liveCaption || (
-                        <span className="text-slate-400">
-                          {recording
-                            ? "Listening…"
-                            : "Interim text while recording (Chrome / Edge)."}
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex min-h-0 min-h-[8rem] flex-1 flex-col rounded-xl border border-slate-200 bg-slate-50/90 p-4">
-                    <h3 className="shrink-0 font-medium text-slate-700 text-xs uppercase tracking-wide">
-                      Whisper result
-                    </h3>
-                    <p className="mt-2 min-h-0 flex-1 overflow-y-auto text-slate-800 text-sm leading-relaxed">
-                      {whisperText || (
-                        <span className="text-slate-400">
-                          Appears after you stop.
-                        </span>
-                      )}
-                    </p>
-                  </div>
+
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border-2 border-slate-300/80 bg-white p-1 shadow-sm">
+                  <h3 className="shrink-0 px-3 pt-3 font-semibold text-slate-900 text-sm">
+                    Whisper transcript
+                  </h3>
+                  <p className="mx-2 mb-2 mt-1 min-h-0 flex-1 overflow-y-auto text-pretty p-3 text-base leading-relaxed text-slate-900">
+                    {whisperText || (
+                      <span className="text-slate-500">
+                        Your transcription appears here after you stop recording.
+                      </span>
+                    )}
+                  </p>
                 </div>
+
+                <div className="flex max-h-28 min-h-20 shrink-0 flex-col rounded-lg border border-slate-200 bg-slate-50/90 p-3">
+                  <h3 className="shrink-0 font-medium text-slate-600 text-xs uppercase tracking-wide">
+                    Browser caption
+                  </h3>
+                  <p className="mt-1 min-h-0 flex-1 overflow-y-auto text-slate-800 text-sm leading-relaxed">
+                    {liveCaption || (
+                      <span className="text-slate-400">
+                        {recording
+                          ? "Listening…"
+                          : "Interim captions while recording (if supported)."}
+                      </span>
+                    )}
+                  </p>
+                </div>
+
+                <details className="shrink-0 rounded-lg border border-slate-200 bg-slate-50 text-slate-800">
+                  <summary className="cursor-pointer select-none px-3 py-2 font-medium text-slate-700 text-sm hover:bg-slate-100/80">
+                    Input level (waveform)
+                  </summary>
+                  <div className="border-slate-200 border-t p-3">
+                    <canvas
+                      className="h-20 w-full rounded-lg border border-slate-200 bg-slate-50"
+                      height={80}
+                      ref={canvasRef}
+                      width={640}
+                    />
+                  </div>
+                </details>
               </div>
             )}
           </StudioColumn>

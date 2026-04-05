@@ -560,118 +560,182 @@ export function ChunkedTranscriptionPanel({
   }, [teardownLive]);
 
   const rootGap = dense ? "gap-3" : "space-y-4";
-  const transcriptBox = dense
-    ? "min-h-0 flex-1 overflow-y-auto rounded-lg border border-slate-200 bg-white/80 p-3 text-sm leading-relaxed"
-    : "mt-2 min-h-[4.5rem] text-pretty text-sm";
+  const transcriptBoxDenseStable =
+    "min-h-0 flex-1 overflow-y-auto rounded-md bg-white/95 p-3 text-base leading-relaxed text-slate-900";
+  const transcriptBoxDenseUnstable =
+    "min-h-0 flex-1 overflow-y-auto rounded-md bg-white/90 p-2 text-sm leading-relaxed text-slate-800";
 
   return (
     <div className={`flex min-h-0 flex-col ${rootGap} ${className}`}>
-      {dense ? <ChunkPipelineFlowMicro /> : <ChunkPipelineFlowDiagram />}
-
-      <SlidingBufferVisualizer compact={dense} viz={viz} />
-
-      <canvas
-        className={`w-full rounded-xl border border-slate-200 bg-slate-50 ${dense ? "h-24 shrink-0" : "h-28"}`}
-        height={dense ? 96 : 112}
-        ref={canvasRef}
-        width={640}
-      />
-
-      <div className={`flex flex-wrap items-center ${dense ? "gap-2" : "gap-3"}`}>
-        {!liveOn ? (
-          <Button
-            disabled={!apiReachable || disabled}
-            onClick={() => void startLive()}
-            type="button"
-          >
-            Start live
-          </Button>
-        ) : (
-          <Button
-            disabled={disabled}
-            onClick={() => void stopLive()}
-            type="button"
-            variant="destructive"
-          >
-            Stop
-          </Button>
-        )}
-      </div>
-
       {dense ? (
-        <div className="flex min-h-0 flex-1 flex-col gap-3">
-          <div className="flex min-h-28 flex-1 flex-col rounded-xl border border-amber-200 bg-amber-50/50 p-3">
-            <h3 className="shrink-0 font-medium text-amber-900 text-xs uppercase tracking-wide">
-              Unstable
-            </h3>
-            <p className={`text-slate-800 ${transcriptBox}`}>
-              {unstableText || (
-                <span className="text-slate-400">Latest API response.</span>
-              )}
-            </p>
+        <>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {!liveOn ? (
+              <Button
+                disabled={!apiReachable || disabled}
+                onClick={() => void startLive()}
+                type="button"
+              >
+                Start live
+              </Button>
+            ) : (
+              <Button
+                disabled={disabled}
+                onClick={() => void stopLive()}
+                type="button"
+                variant="destructive"
+              >
+                Stop
+              </Button>
+            )}
+            {status ? (
+              <p
+                className="min-w-0 flex-1 text-slate-600 text-xs leading-snug"
+                role="status"
+              >
+                {status}
+              </p>
+            ) : null}
           </div>
-          <div className="flex min-h-28 flex-1 flex-col rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
-            <h3 className="shrink-0 font-medium text-emerald-900 text-xs uppercase tracking-wide">
-              Stable
-            </h3>
-            <p className={`text-slate-800 ${transcriptBox}`}>
-              {stableText || (
-                <span className="text-slate-400">Merged transcript.</span>
-              )}
+
+          {!apiReachable ? (
+            <p className="shrink-0 font-medium text-red-700 text-sm">
+              API offline — start the server to transcribe.
             </p>
+          ) : null}
+
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+            <div className="flex min-h-0 flex-[1.25_1_0] flex-col rounded-xl border-2 border-emerald-300/80 bg-emerald-50/90 p-1 shadow-sm">
+              <h3 className="shrink-0 px-3 pt-3 font-semibold text-emerald-950 text-sm tracking-tight">
+                Transcript
+                <span className="ml-2 font-normal text-emerald-800/80 text-xs">
+                  merged from overlapping windows
+                </span>
+              </h3>
+              <p className={`mx-2 mb-2 mt-1 text-pretty ${transcriptBoxDenseStable}`}>
+                {stableText || (
+                  <span className="text-slate-500">
+                    Start live — your deduplicated text appears here as you
+                    speak.
+                  </span>
+                )}
+              </p>
+            </div>
+            <div className="flex min-h-0 flex-[0.75_1_0] flex-col rounded-xl border border-amber-200 bg-amber-50/60 p-1">
+              <h3 className="shrink-0 px-3 pt-2 font-medium text-amber-950 text-xs uppercase tracking-wide">
+                Latest chunk
+              </h3>
+              <p className={`mx-2 mb-2 mt-1 text-pretty ${transcriptBoxDenseUnstable}`}>
+                {unstableText || (
+                  <span className="text-slate-500">
+                    Raw text from the most recent API response (may jump while
+                    streaming).
+                  </span>
+                )}
+              </p>
+            </div>
           </div>
-        </div>
+
+          <details className="shrink-0 rounded-lg border border-slate-200 bg-slate-50/90 text-slate-800">
+            <summary className="cursor-pointer select-none px-3 py-2 font-medium text-slate-700 text-sm hover:bg-slate-100/80">
+              Buffer, input level &amp; pipeline
+            </summary>
+            <div className="space-y-3 border-slate-200 border-t p-3">
+              <ChunkPipelineFlowMicro />
+              <SlidingBufferVisualizer compact viz={viz} />
+              <canvas
+                className="h-16 w-full rounded-lg border border-slate-200 bg-slate-50"
+                height={64}
+                ref={canvasRef}
+                width={640}
+              />
+            </div>
+          </details>
+        </>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4">
-            <h3 className="font-medium text-amber-900 text-xs uppercase tracking-wide">
-              Unstable (latest response)
-            </h3>
-            <p className="mt-2 min-h-[4.5rem] text-pretty text-slate-800 text-sm">
-              {unstableText || (
-                <span className="text-slate-400">
-                  Raw text from the last transcription call to return (may arrive
-                  out of order).
-                </span>
-              )}
-            </p>
+        <>
+          <div className="shrink-0">
+            <ChunkPipelineFlowDiagram />
           </div>
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-4">
-            <h3 className="font-medium text-emerald-900 text-xs uppercase tracking-wide">
-              Stable (deduped)
-            </h3>
-            <p className="mt-2 min-h-[4.5rem] text-pretty text-slate-800 text-sm">
-              {stableText || (
-                <span className="text-slate-400">
-                  Running merge across overlapping windows.
-                </span>
-              )}
-            </p>
+
+          <div className="shrink-0">
+            <SlidingBufferVisualizer compact={dense} viz={viz} />
           </div>
-        </div>
+
+          <canvas
+            className="h-28 w-full shrink-0 rounded-xl border border-slate-200 bg-slate-50"
+            height={112}
+            ref={canvasRef}
+            width={640}
+          />
+
+          <div className="flex shrink-0 flex-wrap items-center gap-3">
+            {!liveOn ? (
+              <Button
+                disabled={!apiReachable || disabled}
+                onClick={() => void startLive()}
+                type="button"
+              >
+                Start live
+              </Button>
+            ) : (
+              <Button
+                disabled={disabled}
+                onClick={() => void stopLive()}
+                type="button"
+                variant="destructive"
+              >
+                Stop
+              </Button>
+            )}
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4">
+              <h3 className="font-medium text-amber-900 text-xs uppercase tracking-wide">
+                Unstable (latest response)
+              </h3>
+              <p className="mt-2 min-h-[4.5rem] text-pretty text-slate-800 text-sm">
+                {unstableText || (
+                  <span className="text-slate-400">
+                    Raw text from the last transcription call to return (may arrive
+                    out of order).
+                  </span>
+                )}
+              </p>
+            </div>
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-4">
+              <h3 className="font-medium text-emerald-900 text-xs uppercase tracking-wide">
+                Stable (deduped)
+              </h3>
+              <p className="mt-2 min-h-[4.5rem] text-pretty text-slate-800 text-sm">
+                {stableText || (
+                  <span className="text-slate-400">
+                    Running merge across overlapping windows.
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          {status ? (
+            <p className="shrink-0 text-slate-600 text-sm" role="status">
+              {status}
+            </p>
+          ) : null}
+
+          {!apiReachable ? (
+            <p className="shrink-0 text-slate-500 text-sm">API offline.</p>
+          ) : null}
+
+          <p className="text-slate-500 text-xs">
+            Model:{" "}
+            <code className="rounded bg-slate-100 px-1">{TRANSCRIBE_MODEL}</code> ·
+            Window {String(WINDOW_SEC)}s · Step {String(STEP_SEC)}s · Overlap{" "}
+            {String(OVERLAP_SEC)}s
+          </p>
+        </>
       )}
-
-      {status ? (
-        <p
-          className={`shrink-0 text-slate-600 ${dense ? "text-xs leading-relaxed" : "text-sm"}`}
-          role="status"
-        >
-          {status}
-        </p>
-      ) : null}
-
-      {!apiReachable ? (
-        <p className="shrink-0 text-slate-500 text-sm">API offline.</p>
-      ) : null}
-
-      {!dense ? (
-        <p className="text-slate-500 text-xs">
-          Model:{" "}
-          <code className="rounded bg-slate-100 px-1">{TRANSCRIBE_MODEL}</code> ·
-          Window {String(WINDOW_SEC)}s · Step {String(STEP_SEC)}s · Overlap{" "}
-          {String(OVERLAP_SEC)}s
-        </p>
-      ) : null}
     </div>
   );
 }
