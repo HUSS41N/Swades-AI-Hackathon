@@ -1,6 +1,6 @@
 # Attack Capital — Recording & transcription studio
 
-Monorepo for a **browser + API transcription studio**: live sliding-window chunking, single-take Whisper, built-in samples, file upload, and an **optional Redis-backed job queue** for async full-file jobs. PostgreSQL is used for health checks and a small chunk-ack demo schema.
+Monorepo for a **browser + API transcription studio**: live sliding-window chunking, single-take Whisper, built-in samples, file upload, and an **optional Redis-backed job queue** for async full-file jobs. PostgreSQL is used for health checks and a small chunk-ack demo schema. You can run locally with **`npm run dev`** or bring up **Postgres + Redis + API + web** with **Docker Compose** (`docker-compose.yml` at the repo root).
 
 ---
 
@@ -84,13 +84,19 @@ Do these steps **in order**:
 
 ### Option B: Docker Compose (full stack)
 
-From the repo root:
+The repo includes a root **`docker-compose.yml`** that wires **Postgres**, **Redis**, a **db-migrate** step, the **API** (`docker/Dockerfile.api`), and the **Next.js web** app (`docker/Dockerfile.web`). Use [Docker Compose](https://docs.docker.com/compose/) (v2: `docker compose` CLI plugin; older installs may use the `docker-compose` binary).
+
+From the **repository root**:
 
 ```bash
 docker compose up --build
 ```
 
-This starts Postgres, optional Redis, migrations, the API, and the web app as defined in `docker-compose.yml`. Rebuild the **web** image if you change `NEXT_PUBLIC_API_URL` or `WEB_ORIGIN` baked into the build.
+- **Redis** is included; the API gets **`REDIS_URL`** so async transcription can use the queue path.
+- Put secrets and overrides in **`apps/server/.env`** — `docker-compose.yml` loads it into the **`api`** service (`env_file`, optional). You still need **`OPENAI_API_KEY`** there for transcription.
+- Rebuild the **web** image after changing **`NEXT_PUBLIC_API_URL`** or **`WEB_ORIGIN`** if those are baked in at build time.
+
+**Postgres only** (API + web still on the host with `npm run dev`): `npm run docker:db` runs `docker compose up -d postgres` using the same compose file.
 
 ### Option C: One app at a time
 
@@ -250,13 +256,7 @@ For this repo’s **live deployment**, use the URLs in [Live deployment (cloud)]
 
 Trailing slashes in `WEB_ORIGIN` entries are ignored when matching; use `https://` and the exact hostname the browser sends in the `Origin` header.
 
-### Full stack in Docker
-
-```bash
-docker compose up --build
-```
-
-Includes **Redis** and sets `REDIS_URL` for the API. Rebuild the **web** image if you change `NEXT_PUBLIC_API_URL` / `WEB_ORIGIN`.
+For a **local full stack** with Docker, use [Option B: Docker Compose](#option-b-docker-compose-full-stack) above.
 
 ---
 

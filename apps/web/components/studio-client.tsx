@@ -424,10 +424,10 @@ export function StudioClient({
                 <span className="text-slate-400"> · </span>
                 <span
                   className={
-                    dbOk ? "font-medium text-emerald-700" : "font-medium text-amber-800"
+                    dbOk ? "font-medium text-emerald-700" : "text-slate-500"
                   }
                 >
-                  {dbOk ? "Database OK" : "Database issue"}
+                  {dbOk ? "Database OK" : "Database offline (optional)"}
                 </span>
                 {queueLabel ? (
                   <>
@@ -451,9 +451,9 @@ export function StudioClient({
         </div>
       </header>
 
-      {!apiReachable || (apiReachable && !dbOk) ? (
+      {!apiReachable ? (
         <div className="shrink-0 px-4 pt-3">
-          <CompactDevHint showDb={apiReachable && !dbOk} />
+          <CompactDevHint apiBaseUrl={apiBaseUrl} />
         </div>
       ) : null}
 
@@ -635,34 +635,31 @@ export function StudioClient({
   );
 }
 
-function CompactDevHint({ showDb }: { showDb: boolean }) {
+function CompactDevHint({ apiBaseUrl }: { apiBaseUrl: string }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-amber-50/80 px-4 py-3 text-slate-800 text-sm leading-relaxed">
-      <p className="font-medium text-slate-900">
-        {showDb ? "Database unreachable" : "API unreachable"}
-      </p>
+      <p className="font-medium text-slate-900">API unreachable</p>
       <p className="mt-1 text-slate-700">
-        Start Postgres with{" "}
-        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs">
-          npm run docker:db
-        </code>
-        , copy{" "}
-        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs">
-          apps/server/.env.example
-        </code>{" "}
-        to{" "}
-        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs">
-          .env
-        </code>
-        , run{" "}
-        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs">
-          npm run db:push
-        </code>
-        , then{" "}
+        Start the API (e.g.{" "}
         <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs">
           npm run dev
+        </code>{" "}
+        or{" "}
+        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs">
+          npm run dev:server
         </code>
-        .
+        ) and confirm this app points at it:{" "}
+        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs break-all">
+          {apiBaseUrl}
+        </code>{" "}
+        (<code className="rounded bg-white px-1 font-mono text-xs">
+          NEXT_PUBLIC_API_URL
+        </code>{" "}
+        in{" "}
+        <code className="rounded bg-white px-1 font-mono text-xs">
+          apps/web/.env.local
+        </code>
+        ).
       </p>
     </div>
   );
