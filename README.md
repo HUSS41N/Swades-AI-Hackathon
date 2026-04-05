@@ -4,6 +4,20 @@ Monorepo for a **browser + API transcription studio**: live sliding-window chunk
 
 ---
 
+## Live deployment (cloud)
+
+This project is deployed with the **UI on Vercel** and the **API on Railway**.
+
+| | URL |
+|---|-----|
+| **Studio (Next.js)** | [https://swades-ai-hackathon-web-roan.vercel.app](https://swades-ai-hackathon-web-roan.vercel.app) |
+| **API (Hono)** | [https://server-production-e1e9.up.railway.app](https://server-production-e1e9.up.railway.app) |
+| **API health** | [https://server-production-e1e9.up.railway.app/health](https://server-production-e1e9.up.railway.app/health) |
+
+The Vercel app must have `NEXT_PUBLIC_API_URL` set to the Railway API base (no trailing slash). The Railway service must list the Vercel origin in `WEB_ORIGIN` so the browser can call the API without CORS errors. See [Production CORS](#production-cors-eg-vercel--railway).
+
+---
+
 ## How to run
 
 ### Prerequisites
@@ -92,7 +106,7 @@ npm run dev:web      # Next.js only (default 3001); still needs API URL in .env.
 
 ### Deploying (Vercel + Railway, etc.)
 
-Set **`WEB_ORIGIN`** on the API to your real frontend origin (comma-separated for multiple). Set **`NEXT_PUBLIC_API_URL`** on the frontend to the public API base URL. See [Production CORS](#production-cors-eg-vercel--railway) below.
+For the **live deployment** above, the same rules apply: Railway **`WEB_ORIGIN`** must include `https://swades-ai-hackathon-web-roan.vercel.app`, and Vercel **`NEXT_PUBLIC_API_URL`** must be `https://server-production-e1e9.up.railway.app`. For other environments, set **`WEB_ORIGIN`** on the API to your real frontend origin (comma-separated for multiple) and **`NEXT_PUBLIC_API_URL`** on the frontend to the public API base URL. See [Production CORS](#production-cors-eg-vercel--railway) below.
 
 ---
 
@@ -215,6 +229,8 @@ Browser → POST /api/transcribe/async (multipart, same as sync)
 ## Production CORS (e.g. Vercel + Railway)
 
 The API only reflects `Access-Control-Allow-Origin` for hosts listed in **`WEB_ORIGIN`** on the server. If the browser shows a CORS error, the frontend origin is missing from that list.
+
+For this repo’s **live deployment**, use the URLs in [Live deployment (cloud)](#live-deployment-cloud): e.g. `WEB_ORIGIN=https://swades-ai-hackathon-web-roan.vercel.app` on Railway and `NEXT_PUBLIC_API_URL=https://server-production-e1e9.up.railway.app` on Vercel.
 
 1. On **Railway** (or wherever the API runs), set `WEB_ORIGIN` to your **exact** frontend origin (scheme + host, no path):
 
