@@ -25,6 +25,10 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 hono
 
+# ioredis is marked --external in esbuild (bundling breaks its dynamic Node requires).
+RUN npm install ioredis@5.10.1 --omit=dev \
+  && chown -R hono:nodejs /app
+
 COPY --from=server-build --chown=hono:nodejs /app/apps/server/dist/index.js ./index.js
 
 USER hono

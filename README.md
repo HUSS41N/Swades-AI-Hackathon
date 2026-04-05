@@ -1,184 +1,162 @@
-# Reliable Recording Chunking Pipeline
+# Attack Capital — Recording & transcription studio
 
-An assignment for building a reliable chunking setup that ensures recording data stays accurate in all cases — no data loss, no silent failures.
+Monorepo for a **browser + API transcription studio**: live sliding-window chunking, single-take Whisper, built-in samples, file upload, and an **optional Redis-backed job queue** for async full-file jobs. PostgreSQL is used for health checks and a small chunk-ack demo schema.
 
-## How It Works
+---
+
+## What we built
+
+- **Live chunking** — Mic → 1 s PCM chunks → rolling 5 s window (3 s step, 2 s overlap) → `POST /api/transcribe` with `gpt-4o-mini-transcribe` → merge and dedupe in the browser. Unstable vs stable transcript UI with a small buffer visualizer.
+- **Single Whisper** — One-shot recording → full file `whisper-1` via sync API; optional Web Speech API captions where supported.
+- **Samples + upload** — Curated WAVs under `apps/web/public/samples`; each row supports **Full Whisper**, **Chunk mini** (same client pipeline as live), and **Queue** (async API path).
+- **Async transcription** — `POST /api/transcribe/async` enqueues work when **Redis** is configured and healthy; otherwise the same request is handled **inline** (no queue) so local dev works without Redis.
+- **In-process worker** — With Redis, a background consumer drains a Redis list, runs OpenAI transcription, and stores job status for `GET /api/transcribe/jobs/:id`.
+- **Docs in the app** — [`/docs`](http://localhost:3001/docs) explains live chunking vs upload → queue → worker (mirrors this README at a high level).
+- **Docker** — Compose brings up Postgres, **Redis**, API (with `ioredis` **external** to the esbuild bundle + runtime install in the API image), migrate, and Next.js web.
+
+---
+
+## Architecture
+
+### Live chunking (real-time)
 
 ```
-Client (Browser)
-    │
-    ├── 1. Record & chunk data on the client side
-    ├── 2. Store chunks in OPFS (Origin Private File System)
-    ├── 3. Upload chunks to a storage bucket
-    ├── 4. On success → acknowledge (ack) to the database
-    │
-    └── Recovery: if DB has ack but chunk is missing from bucket
-        └── Re-send from OPFS → bucket
+Microphone → Web Audio (1 s frames) → sliding 5×1 s buffer
+    → WAV per window → POST /api/transcribe (mini model)
+    → responses ordered + merged → Unstable / Stable UI
 ```
 
-**Main objective:** In all cases, the recording data stays accurate. OPFS acts as the durable client-side buffer — chunks are only cleared after the bucket and DB are both confirmed in sync.
+No Redis involved; each window is a synchronous HTTP call from the client’s perspective.
 
-### Flow Details
+### Upload / sample → optional queue
 
-1. **Client-side chunking** — Recording data is split into chunks in the browser
-2. **OPFS storage** — Each chunk is persisted to the Origin Private File System before any network call, so nothing is lost if the tab closes or the network drops
-3. **Bucket upload** — Chunks are uploaded to a storage bucket (can be a local bucket for testing, e.g. MinIO or a local S3-compatible store)
-4. **DB acknowledgment** — Once the bucket confirms receipt, an ack record is written to the database
-5. **Reconciliation** — If the DB shows an ack but the chunk is missing from the bucket (e.g. bucket purge, replication lag), the client re-uploads from OPFS to restore consistency
+```
+Browser → POST /api/transcribe/async (multipart, same as sync)
+    ├─ Redis UP   → store payload + job id → worker → OpenAI → job record
+    │                 UI polls GET /api/transcribe/jobs/:jobId
+    └─ Redis DOWN / unset → transcribe in the request → return text (queued: false)
+```
 
-## Tech Stack
+### Backend services
 
-- **Next.js** — Frontend (App Router)
-- **Hono** — Backend API server
-- **Bun** — Runtime
-- **Drizzle ORM + PostgreSQL** — Database
-- **TailwindCSS + shadcn/ui** — UI
-- **Turborepo** — Monorepo build system
+| Piece | Role |
+|--------|------|
+| **Hono API** | `/health`, `/api/transcribe`, `/api/transcribe/async`, `/api/transcribe/jobs/:id`, `/api/chunks/*` |
+| **PostgreSQL** | Drizzle schema; DB ping in `/health` |
+| **Redis (optional)** | Job queue + payload keys + status keys |
+| **OpenAI** | `OPENAI_API_KEY` on server; never commit keys |
 
-## Getting Started
+### Health response
+
+`GET /health` includes `database`, `redis` (`ok` \| `skipped` \| `error`), and `transcribeQueue` (`redis` \| `inline`).
+
+---
+
+## Tech stack
+
+- **Next.js** (App Router) — `apps/web`
+- **Hono** + **@hono/node-server** — `apps/server` (dev via **tsx**; production **Node** + bundled `dist/index.js`)
+- **Drizzle ORM + PostgreSQL** — `packages/db`
+- **Redis + ioredis** — optional queue (not bundled; see `docker/Dockerfile.api`)
+- **Tailwind CSS + shadcn-style UI** — `packages/ui`, `apps/web`
+- **Turborepo** — `turbo.json`
+
+---
+
+## Getting started
 
 ```bash
 npm install
 ```
 
-You can use [Bun](https://bun.sh) instead (`bun install`). The API server defaults to **Node + `tsx`** for `npm run dev` so the monorepo works without Bun; with Bun installed, run **`bun run dev:bun`** from `apps/server` for a Bun-native watch process.
+### Database
 
-### Database Setup
+1. Start Postgres (e.g. `npm run docker:db` — postgres service from `docker-compose.yml` on `localhost:5432`, db `attack_capital`).
+2. Copy `apps/server/.env.example` → `apps/server/.env` and set `DATABASE_URL`.
+3. `npm run db:push`
 
-1. Run PostgreSQL (local install or Docker — recommended for a quick match with Compose credentials):
-
-```bash
-npm run docker:db
-```
-
-This starts only the **`postgres`** service from `docker-compose.yml` on `localhost:5432` (user / password / database: `postgres` / `postgres` / `attack_capital`).
-
-2. Copy `apps/server/.env.example` to `apps/server/.env` and set **`DATABASE_URL`** (the example already targets that Docker database).
-
-3. Apply the schema:
-
-```bash
-npm run db:push
-```
-
-### Run Development
+### Run dev
 
 ```bash
 npm run dev
 ```
 
-- Web app: [http://localhost:3001](http://localhost:3001)
-- API server: [http://localhost:3000](http://localhost:3000)
+- Web: [http://localhost:3001](http://localhost:3001)
+- API: [http://localhost:3000](http://localhost:3000)
 
-### Voice transcription (Whisper)
+### OpenAI
 
-The home page (`/`) has **Live** (mic → Whisper) and **Upload** (audio file → Whisper). Live mode can show a **browser caption** (Web Speech API where supported). Both call **`POST /api/transcribe`** (`whisper-1` on the server). Set in `apps/server/.env`:
+In `apps/server/.env`:
 
 ```bash
-OPENAI_API_KEY=sk-...your-key...
+OPENAI_API_KEY=sk-...
 ```
 
-**Never commit API keys.** If a key was pasted into chat or committed, [rotate it](https://platform.openai.com/api-keys) in the OpenAI dashboard. **`docker compose`** loads **`apps/server/.env`** into the **`api`** container (optional if the file is missing). `DATABASE_URL` in Compose still overrides that file so the API uses the **postgres** service, not `localhost`.
+Optional queue:
 
-### Docker (Postgres + API + UI)
+```bash
+REDIS_URL=redis://localhost:6379
+```
 
-For **everything** in containers (Postgres, migrate, API, Next), use:
+**Never commit API keys.** Compose can load `apps/server/.env` into the `api` service; `DATABASE_URL` in Compose still targets the `postgres` service.
 
-One Compose file builds the Hono API image and the Next.js image, runs PostgreSQL, applies the Drizzle schema (`db-migrate`), then starts **api** and **web**:
+### Full stack in Docker
 
 ```bash
 docker compose up --build
 ```
 
-- Postgres: `localhost:5432` (user/password/db: `postgres` / `postgres` / `attack_capital`)
-- API: [http://localhost:3000](http://localhost:3000)
-- Web: [http://localhost:3001](http://localhost:3001)
+Includes **Redis** and sets `REDIS_URL` for the API. Rebuild the **web** image if you change `NEXT_PUBLIC_API_URL` / `WEB_ORIGIN`.
 
-The browser bundle is built with `NEXT_PUBLIC_API_URL=http://localhost:3000`. For another public URL, rebuild the web service with a different build arg (see `docker-compose.yml`) and set **`WEB_ORIGIN`** on the API to match where the UI is served (comma-separated allowed).
+---
 
-## Load Testing
+## Future scope & improvements
 
-Target: **300,000 requests** to validate the chunking pipeline under heavy load.
+- **Durable upload pipeline** — Align with the original “OPFS → object storage → DB ack → reconciliation” story; current UI focuses on transcription and an optional Redis queue, not bucket + OPFS.
+- **Separate worker process** — Run queue consumers out of the API process for scale; use BullMQ or similar if you need retries, dead-letter, and metrics.
+- **Object storage for large async jobs** — Avoid storing big base64 payloads in Redis; pass S3/GCS URLs in job messages.
+- **Auth & rate limits** — Protect `/api/transcribe` and job endpoints in production.
+- **Streaming transcription** — Server-sent events or WebSocket for partial tokens if the model/API supports it.
+- **Tests** — Contract tests for `/health`, sync/async transcribe, and job polling; e2e for the studio flows.
+- **Accessibility** — Deeper audit of live controls, focus order, and ARIA on custom toggles.
 
-### Setup
+---
 
-Use a load testing tool like [k6](https://k6.io), [autocannon](https://github.com/mcollina/autocannon), or [artillery](https://artillery.io) to simulate concurrent chunk uploads.
+## Load testing (chunk ack API)
 
-Example with **k6**:
+The repo still includes an example **k6** script target for `POST /api/chunks/upload` (Postgres ack demo). For 300K-style runs, point k6 at your API and tune VUs/rate. Validate DB write success and latency; this path is separate from the OpenAI transcription routes.
 
-```js
-import http from "k6/http";
-import { check } from "k6";
+---
 
-export const options = {
-  scenarios: {
-    chunk_uploads: {
-      executor: "constant-arrival-rate",
-      rate: 5000,           // 5,000 req/s
-      timeUnit: "1s",
-      duration: "1m",       // → 300K requests in 60s
-      preAllocatedVUs: 500,
-      maxVUs: 1000,
-    },
-  },
-};
-
-export default function () {
-  const payload = JSON.stringify({
-    chunkId: `chunk-${__VU}-${__ITER}`,
-    data: "x".repeat(1024), // 1KB dummy chunk
-  });
-
-  const res = http.post("http://localhost:3000/api/chunks/upload", payload, {
-    headers: { "Content-Type": "application/json" },
-  });
-
-  check(res, {
-    "status 200": (r) => r.status === 200,
-  });
-}
-```
-
-Run:
-
-```bash
-k6 run load-test.js
-```
-
-### What to Validate
-
-- **No data loss** — every ack in the DB has a matching chunk in the bucket
-- **OPFS recovery** — chunks survive client disconnects and can be re-uploaded
-- **Throughput** — server handles sustained 5K req/s without dropping chunks
-- **Consistency** — reconciliation catches and repairs any bucket/DB mismatches after the run
-
-## Project Structure
+## Project structure
 
 ```
-recoding-assignment/
 ├── apps/
-│   ├── web/         # Frontend (Next.js) — chunking, OPFS, upload logic
-│   └── server/      # Backend API (Hono) — bucket upload, DB ack
+│   ├── web/                 # Next.js studio + /docs
+│   └── server/              # Hono API, transcribe + optional Redis worker
 ├── docker/
-│   ├── Dockerfile.api   # API + db-migrate stages
-│   └── Dockerfile.web   # Next.js standalone image
-├── docker-compose.yml   # postgres, db-migrate, api, web
+│   ├── Dockerfile.api       # esbuild bundle; ioredis installed in runner
+│   └── Dockerfile.web
+├── docker-compose.yml       # postgres, redis, db-migrate, api, web
 ├── packages/
-│   ├── ui/          # Shared shadcn/ui, `src/samples` registry + `/samples/*.wav` in web `public/`
-│   ├── db/          # Drizzle ORM schema & queries
-│   ├── env/         # Type-safe environment config
-│   └── config/      # Shared TypeScript config
+│   ├── ui/                  # Shared UI, sample registry
+│   ├── db/                  # Drizzle schema
+│   ├── env/                 # Zod env for web + server
+│   └── config/              # TypeScript config
 ```
 
-## Available Scripts
+WAV samples: registry in `packages/ui/src/samples/registry.ts`; files served from `apps/web/public/samples/`.
 
-- `npm run dev` — Start all apps in development mode
-- `npm run build` — Build all apps
-- `npm run dev:web` — Start only the web app
-- `npm run dev:server` — Start only the server
-- `npm run check-types` — TypeScript type checking
-- `npm run db:push` — Push schema changes to database
-- `npm run db:generate` — Generate database client/types
-- `npm run db:migrate` — Run database migrations
-- `npm run db:studio` — Open database studio UI
-- `npm run docker:db` — Start only PostgreSQL via Docker Compose (for local API + Next)
+---
+
+## Scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm run dev` | Dev for all apps |
+| `npm run build` | Production build |
+| `npm run dev:web` / `dev:server` | Single app |
+| `npm run check-types` | Typecheck |
+| `npm run db:push` | Push Drizzle schema |
+| `npm run db:generate` / `db:migrate` / `db:studio` | Drizzle tooling |
+| `npm run docker:db` | Postgres only via Compose |

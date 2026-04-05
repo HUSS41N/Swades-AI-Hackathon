@@ -12,6 +12,11 @@ const serverEnvSchema = z.object({
     (v) => (v === "" || v === null || v === undefined ? undefined : v),
     z.string().min(1).optional(),
   ),
+  /** Optional. When set, POST /api/transcribe/async can queue jobs; worker runs in-process. */
+  REDIS_URL: z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? undefined : v),
+    z.string().min(1).optional(),
+  ),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

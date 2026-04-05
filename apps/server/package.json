@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:bun": "bun run --watch src/index.ts",
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:ioredis",
     "start": "node dist/index.js",
     "check-types": "tsc --noEmit",
     "lint": "echo \"No lint configured\""
@@ -16,7 +16,8 @@
     "@repo/db": "*",
     "@repo/env": "*",
     "drizzle-orm": "^0.40.0",
-    "hono": "^4.7.4"
+    "hono": "^4.7.4",
+    "ioredis": "^5.10.1"
   },
   "devDependencies": {
     "@repo/config": "*",

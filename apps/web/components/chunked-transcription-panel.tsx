@@ -54,10 +54,12 @@ async function postTranscribeWav(
 /** One-line pipeline hint for dense layouts */
 export function ChunkPipelineFlowMicro() {
   return (
-    <p className="text-[10px] text-slate-600 leading-snug">
-      Mic → 1s PCM → 5s window (step 3s, overlap 2s) →{" "}
-      <code className="rounded bg-slate-100 px-0.5">{TRANSCRIBE_MODEL}</code> →
-      merge / dedupe
+    <p className="text-slate-600 text-sm leading-relaxed">
+      Mic → 1 s PCM → 5 s window (step 3 s, overlap 2 s) →{" "}
+      <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs">
+        {TRANSCRIBE_MODEL}
+      </code>{" "}
+      → merge and dedupe
     </p>
   );
 }
@@ -259,22 +261,24 @@ export function SlidingBufferVisualizer({
 
   return (
     <div
-      className={`rounded-lg border border-slate-200 bg-white ${compact ? "p-2" : "p-4"}`}
+      className={`rounded-xl border border-slate-200 bg-white ${compact ? "p-3" : "p-4"}`}
     >
       <h3
-        className={`font-medium text-slate-700 uppercase tracking-wide ${compact ? "text-[10px]" : "text-xs"}`}
+        className={`font-medium text-slate-700 uppercase tracking-wide ${compact ? "text-xs" : "text-sm"}`}
       >
-        Buffer (1s slots)
+        Buffer (1 s slots)
       </h3>
       {!compact ? (
-        <p className="mt-1 text-slate-500 text-xs">
+        <p className="mt-1 text-slate-500 text-sm">
           Amber = overlap zone (last 2s of a window match the next window’s
           first 2s). Chunk indices are global counters since stream start.
         </p>
       ) : (
-        <p className="mt-0.5 text-[10px] text-slate-500">Amber = 2s overlap</p>
+        <p className="mt-1 text-slate-500 text-xs">
+          Amber highlights the 2 s overlap between windows.
+        </p>
       )}
-      <div className={`flex gap-1 ${compact ? "mt-1.5" : "mt-3"}`}>
+      <div className={`flex gap-1.5 ${compact ? "mt-2" : "mt-3"}`}>
         {Array.from({ length: slots }, (_, i) => {
           const active = i < filled;
           const idx = indices[i];
@@ -284,8 +288,8 @@ export function SlidingBufferVisualizer({
 
           return (
             <div
-              className={`flex flex-1 flex-col rounded border-2 px-0.5 py-1 text-center ${
-                compact ? "min-h-10" : "min-h-[4.5rem] py-2"
+              className={`flex flex-1 flex-col rounded-lg border-2 px-1 py-1.5 text-center ${
+                compact ? "min-h-14" : "min-h-[4.5rem] py-2"
               } ${
                 active
                   ? inOverlapLeft || inOverlapRight
@@ -296,12 +300,12 @@ export function SlidingBufferVisualizer({
               key={`slot-${String(i)}`}
             >
               <span
-                className={`font-mono text-slate-400 ${compact ? "text-[8px]" : "text-[10px]"}`}
+                className={`font-mono text-slate-400 ${compact ? "text-[10px]" : "text-xs"}`}
               >
                 +{String(i + 1)}s
               </span>
               <span
-                className={`mt-auto font-medium ${compact ? "text-[10px]" : "text-xs"} ${active ? "text-slate-800" : "text-slate-400"}`}
+                className={`mt-auto font-medium ${compact ? "text-xs" : "text-sm"} ${active ? "text-slate-800" : "text-slate-400"}`}
               >
                 {active && idx !== undefined ? `#${String(idx)}` : "—"}
               </span>
@@ -310,7 +314,7 @@ export function SlidingBufferVisualizer({
         })}
       </div>
       <dl
-        className={`grid grid-cols-2 font-mono text-slate-600 ${compact ? "mt-1.5 gap-x-2 text-[9px]" : "mt-3 gap-x-4 gap-y-1 text-xs sm:grid-cols-4"}`}
+        className={`grid grid-cols-2 font-mono text-slate-600 ${compact ? "mt-2 gap-x-3 text-xs" : "mt-3 gap-x-4 gap-y-1 text-sm sm:grid-cols-4"}`}
       >
         <div>
           <dt className="text-slate-400">Chunks</dt>
@@ -555,9 +559,9 @@ export function ChunkedTranscriptionPanel({
     };
   }, [teardownLive]);
 
-  const rootGap = dense ? "gap-2" : "space-y-4";
+  const rootGap = dense ? "gap-3" : "space-y-4";
   const transcriptBox = dense
-    ? "min-h-0 flex-1 overflow-y-auto rounded border p-2 text-[11px] leading-snug"
+    ? "min-h-0 flex-1 overflow-y-auto rounded-lg border border-slate-200 bg-white/80 p-3 text-sm leading-relaxed"
     : "mt-2 min-h-[4.5rem] text-pretty text-sm";
 
   return (
@@ -567,18 +571,17 @@ export function ChunkedTranscriptionPanel({
       <SlidingBufferVisualizer compact={dense} viz={viz} />
 
       <canvas
-        className={`w-full rounded-lg border border-slate-200 bg-slate-50 ${dense ? "h-16 shrink-0" : "h-28"}`}
-        height={dense ? 64 : 112}
+        className={`w-full rounded-xl border border-slate-200 bg-slate-50 ${dense ? "h-24 shrink-0" : "h-28"}`}
+        height={dense ? 96 : 112}
         ref={canvasRef}
         width={640}
       />
 
-      <div className={`flex flex-wrap items-center ${dense ? "gap-1.5" : "gap-3"}`}>
+      <div className={`flex flex-wrap items-center ${dense ? "gap-2" : "gap-3"}`}>
         {!liveOn ? (
           <Button
             disabled={!apiReachable || disabled}
             onClick={() => void startLive()}
-            size={dense ? "sm" : "default"}
             type="button"
           >
             Start live
@@ -587,7 +590,6 @@ export function ChunkedTranscriptionPanel({
           <Button
             disabled={disabled}
             onClick={() => void stopLive()}
-            size={dense ? "sm" : "default"}
             type="button"
             variant="destructive"
           >
@@ -597,9 +599,9 @@ export function ChunkedTranscriptionPanel({
       </div>
 
       {dense ? (
-        <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-amber-200 bg-amber-50/50 p-2">
-            <h3 className="shrink-0 font-medium text-amber-900 text-[10px] uppercase tracking-wide">
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <div className="flex min-h-28 flex-1 flex-col rounded-xl border border-amber-200 bg-amber-50/50 p-3">
+            <h3 className="shrink-0 font-medium text-amber-900 text-xs uppercase tracking-wide">
               Unstable
             </h3>
             <p className={`text-slate-800 ${transcriptBox}`}>
@@ -608,8 +610,8 @@ export function ChunkedTranscriptionPanel({
               )}
             </p>
           </div>
-          <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-emerald-200 bg-emerald-50/50 p-2">
-            <h3 className="shrink-0 font-medium text-emerald-900 text-[10px] uppercase tracking-wide">
+          <div className="flex min-h-28 flex-1 flex-col rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
+            <h3 className="shrink-0 font-medium text-emerald-900 text-xs uppercase tracking-wide">
               Stable
             </h3>
             <p className={`text-slate-800 ${transcriptBox}`}>
@@ -651,7 +653,7 @@ export function ChunkedTranscriptionPanel({
 
       {status ? (
         <p
-          className={`shrink-0 text-slate-600 ${dense ? "text-[10px] leading-tight" : "text-sm"}`}
+          className={`shrink-0 text-slate-600 ${dense ? "text-xs leading-relaxed" : "text-sm"}`}
           role="status"
         >
           {status}
@@ -659,9 +661,7 @@ export function ChunkedTranscriptionPanel({
       ) : null}
 
       {!apiReachable ? (
-        <p className={`shrink-0 text-slate-500 ${dense ? "text-[10px]" : "text-sm"}`}>
-          API offline.
-        </p>
+        <p className="shrink-0 text-slate-500 text-sm">API offline.</p>
       ) : null}
 
       {!dense ? (

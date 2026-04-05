@@ -1,13 +1,28 @@
 import { chunkAcks, createDb } from "@repo/db";
 import { getServerEnv } from "@repo/env/server";
 import { serve } from "@hono/node-server";
+import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
+import {
+  MAX_ASYNC_AUDIO_BYTES,
+  connectRedis,
+  enqueueTranscribeJob,
+  getJobRecord,
+  redisPing,
+  startTranscribeWorker,
+  type TranscribeQueueContext,
+} from "./transcribeQueue";
+
 const env = getServerEnv(process.env);
 const db = createDb(env.DATABASE_URL);
+
+const queueCtx: TranscribeQueueContext | null = env.REDIS_URL
+  ? connectRedis(env.REDIS_URL)
+  : null;
 
 const corsOrigins = env.WEB_ORIGIN.split(",")
   .map((origin) => origin.trim())
@@ -106,10 +121,19 @@ app.get("/health", async (c) => {
     database = "error";
   }
 
+  let redis: "ok" | "skipped" | "error" = "skipped";
+  if (queueCtx) {
+    redis = (await redisPing(queueCtx.redis)) ? "ok" : "error";
+  }
+
+  const transcribeQueue = queueCtx && redis === "ok" ? "redis" : "inline";
+
   return c.json({
     ok: true,
     service: "attack-capital-api",
     database,
+    redis,
+    transcribeQueue,
   });
 });
 
@@ -119,7 +143,7 @@ app.get("/api/chunks", async (c) => {
 });
 
 app.post("/api/chunks/upload", async (c) => {
-  const body = await c.req.json().catch(() => null) as {
+  const body = (await c.req.json().catch(() => null)) as {
     chunkId?: string;
     data?: string;
   } | null;
@@ -197,6 +221,124 @@ app.post("/api/transcribe", async (c) => {
 
   return c.json({ ok: true, text: result.text, model });
 });
+
+/**
+ * Async transcription: queues when Redis is healthy; otherwise same response as sync POST /api/transcribe.
+ */
+app.post("/api/transcribe/async", async (c) => {
+  const apiKey = env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return c.json(
+      {
+        error:
+          "OPENAI_API_KEY is not set on the server. Add it to apps/server/.env (never commit keys).",
+      },
+      503,
+    );
+  }
+
+  const body = await c.req.parseBody();
+  const audio = body.audio;
+
+  if (!(audio instanceof Blob)) {
+    return c.json(
+      { error: "Multipart field `audio` (file) is required" },
+      400,
+    );
+  }
+
+  const filename =
+    audio instanceof File && audio.name ? audio.name : "recording.webm";
+
+  const modelRaw = body.model;
+  const model =
+    typeof modelRaw === "string" && modelRaw.trim().length > 0
+      ? modelRaw.trim()
+      : DEFAULT_TRANSCRIBE_MODEL;
+
+  const buf = Buffer.from(await audio.arrayBuffer());
+
+  if (buf.length > MAX_ASYNC_AUDIO_BYTES) {
+    return c.json(
+      {
+        error: `Audio exceeds async limit (${String(MAX_ASYNC_AUDIO_BYTES)} bytes). Use sync /api/transcribe or smaller file.`,
+      },
+      413,
+    );
+  }
+
+  const useQueue =
+    queueCtx !== null && (await redisPing(queueCtx.redis));
+
+  if (!useQueue) {
+    const blob = new Blob([new Uint8Array(buf)]);
+    const result = await transcribeAudio(blob, filename, apiKey, model);
+    if ("error" in result) {
+      return c.json({ error: result.error }, result.status);
+    }
+    return c.json({
+      ok: true,
+      queued: false,
+      text: result.text,
+      model,
+    });
+  }
+
+  const jobId = randomUUID();
+  await enqueueTranscribeJob(queueCtx, {
+    jobId,
+    audioBuffer: buf,
+    filename,
+    model,
+  });
+
+  return c.json({
+    ok: true,
+    queued: true,
+    jobId,
+    model,
+  });
+});
+
+app.get("/api/transcribe/jobs/:jobId", async (c) => {
+  if (!queueCtx) {
+    return c.json(
+      { error: "Redis queue is not configured on this server" },
+      503,
+    );
+  }
+
+  const ok = await redisPing(queueCtx.redis);
+  if (!ok) {
+    return c.json({ error: "Redis is unavailable" }, 503);
+  }
+
+  const jobId = c.req.param("jobId");
+  const record = await getJobRecord(queueCtx, jobId);
+
+  if (!record) {
+    return c.json({ error: "Job not found" }, 404);
+  }
+
+  return c.json({ jobId, ...record });
+});
+
+if (queueCtx && env.OPENAI_API_KEY) {
+  startTranscribeWorker(queueCtx, {
+    transcribe: async (blob, filename, model) => {
+      const key = env.OPENAI_API_KEY;
+      if (!key) {
+        return { error: "OPENAI_API_KEY missing", status: 503 };
+      }
+      return transcribeAudio(blob, filename, key, model);
+    },
+  });
+  console.log("[transcribe-worker] started (Redis queue)");
+} else if (queueCtx && !env.OPENAI_API_KEY) {
+  console.warn(
+    "[transcribe-worker] skipped: OPENAI_API_KEY unset (async jobs would fail)",
+  );
+}
 
 serve(
   {

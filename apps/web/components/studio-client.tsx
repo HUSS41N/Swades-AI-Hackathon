@@ -2,8 +2,10 @@
 
 import { ChunkedTranscriptionPanel } from "./chunked-transcription-panel";
 import { SampleAudioCard } from "./sample-audio-card";
+import { UploadAudioSection } from "./upload-audio-section";
 import { Button } from "@repo/ui/components/button";
 import { AUDIO_SAMPLES } from "@repo/ui/samples";
+import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -12,10 +14,14 @@ import {
   type ReactNode,
 } from "react";
 
+const UPLOAD_OP_ID = "user-upload";
+
 export type HealthPayload = {
   ok?: boolean;
   service?: string;
   database?: "ok" | "error";
+  redis?: "ok" | "skipped" | "error";
+  transcribeQueue?: "redis" | "inline";
 };
 
 function getSpeechRecognitionCtor(): (new () => SpeechRecognition) | null {
@@ -63,17 +69,17 @@ function StudioColumn({
   children: ReactNode;
 }) {
   return (
-    <section className="flex min-h-0 min-w-[11rem] flex-1 basis-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-      <header className="shrink-0 border-slate-100 border-b bg-slate-50 px-2 py-1.5">
-        <h2 className="font-semibold text-slate-900 text-[11px] uppercase tracking-wide">
+    <section className="flex min-h-0 min-w-[18rem] flex-1 basis-0 flex-col overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-sm">
+      <header className="shrink-0 border-slate-100 border-b bg-slate-50/90 px-4 py-3">
+        <h2 className="font-semibold text-slate-900 text-base tracking-tight">
           {title}
         </h2>
       </header>
       <div
         className={
           bodyScroll
-            ? "min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-2"
-            : "flex min-h-0 flex-1 flex-col overflow-hidden p-2"
+            ? "min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-4"
+            : "flex min-h-0 flex-1 flex-col overflow-hidden p-4"
         }
       >
         {children}
@@ -91,19 +97,15 @@ export function StudioClient({
   apiBaseUrl,
   initialHealth,
 }: StudioClientProps) {
-  const [sampleOpId, setSampleOpId] = useState<string | null>(null);
+  const [activeOpId, setActiveOpId] = useState<string | null>(null);
+  const [liveMode, setLiveMode] = useState<"chunk" | "whisper">("chunk");
 
   const [health, setHealth] = useState<HealthPayload | null>(initialHealth);
-  const [chunkStatus, setChunkStatus] = useState<string | null>(null);
-  const [chunkLoading, setChunkLoading] = useState(false);
   const [recording, setRecording] = useState(false);
   const [whisperStatus, setWhisperStatus] = useState<string | null>(null);
   const [whisperLoading, setWhisperLoading] = useState(false);
   const [liveCaption, setLiveCaption] = useState("");
   const [whisperText, setWhisperText] = useState("");
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadTranscript, setUploadTranscript] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const sampleAudioRefs = useRef<Map<string, HTMLAudioElement>>(new Map());
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedPartsRef = useRef<Blob[]>([]);
@@ -170,39 +172,6 @@ export function StudioClient({
     },
     [apiBaseUrl],
   );
-
-  const uploadSampleChunk = useCallback(async () => {
-    setChunkLoading(true);
-    setChunkStatus(null);
-
-    const chunkId = `chunk-${crypto.randomUUID()}`;
-    const res = await fetch(`${apiBaseUrl}/api/chunks/upload`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chunkId,
-        data: "x".repeat(1024),
-      }),
-    }).catch(() => null);
-
-    setChunkLoading(false);
-
-    if (!res) {
-      setChunkStatus("Network error — is the API running?");
-      return;
-    }
-
-    const body = (await res.json().catch(() => null)) as
-      | { error?: string; ok?: boolean }
-      | null;
-
-    if (!res.ok) {
-      setChunkStatus(body?.error ?? `HTTP ${String(res.status)}`);
-      return;
-    }
-
-    setChunkStatus(`Ack stored for ${chunkId}`);
-  }, [apiBaseUrl]);
 
   const stopVisualizer = useCallback(() => {
     if (rafRef.current) {
@@ -383,20 +352,6 @@ export function StudioClient({
     startVisualizer(stream);
   }, [startVisualizer]);
 
-  const runFileTranscribe = useCallback(async () => {
-    if (!uploadFile) {
-      setWhisperStatus("Choose an audio file first.");
-      return;
-    }
-
-    setUploadTranscript("");
-    setWhisperStatus(null);
-    const text = await transcribeBlob(uploadFile, uploadFile.name);
-    if (text !== null) {
-      setUploadTranscript(text);
-    }
-  }, [uploadFile, transcribeBlob]);
-
   useEffect(() => {
     return () => {
       recognitionRef.current?.stop();
@@ -415,217 +370,236 @@ export function StudioClient({
 
   const apiReachable = health?.ok === true;
   const dbOk = health?.database === "ok";
-  const busy = whisperLoading || sampleOpId !== null;
+  const queueRedis = health?.transcribeQueue === "redis";
+  const busy = whisperLoading || activeOpId !== null;
+
+  const queueLabel = !apiReachable
+    ? null
+    : queueRedis
+      ? "Async jobs use Redis"
+      : health?.transcribeQueue === "inline"
+        ? "Async jobs run inline (no Redis)"
+        : null;
 
   return (
-    <div className="flex h-dvh max-h-dvh flex-col overflow-hidden bg-slate-50 text-slate-900">
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-slate-200 border-b bg-white px-3 py-2">
-        <h1 className="font-semibold text-slate-900 text-sm tracking-tight">
-          Recording pipeline
-        </h1>
-        <span className="hidden text-slate-400 text-xs sm:inline">
-          Mini transcribe · Whisper · Postgres chunk ack
-        </span>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <span
-            className={
-              apiReachable
-                ? "rounded bg-emerald-50 px-2 py-0.5 font-medium text-emerald-800 text-[10px]"
-                : "rounded bg-red-50 px-2 py-0.5 font-medium text-red-800 text-[10px]"
-            }
-          >
-            API {apiReachable ? "ok" : "down"}
-          </span>
-          {apiReachable ? (
-            <span
-              className={
-                dbOk
-                  ? "rounded bg-emerald-50 px-2 py-0.5 font-medium text-emerald-800 text-[10px]"
-                  : "rounded bg-amber-50 px-2 py-0.5 font-medium text-amber-900 text-[10px]"
-              }
+    <div className="flex h-dvh max-h-dvh flex-col overflow-hidden bg-slate-100 text-slate-900">
+      <header className="flex shrink-0 flex-col gap-3 border-slate-200 border-b bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="font-semibold text-slate-900 text-xl tracking-tight">
+            Transcription studio
+          </h1>
+          <p className="mt-0.5 text-slate-500 text-sm">
+            Live chunking or single take on the left · samples and upload on the
+            right
+          </p>
+        </div>
+        <div className="flex flex-col gap-3 sm:items-end">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              className="rounded-lg bg-slate-900 px-4 py-2 font-medium text-sm text-white hover:bg-slate-800"
+              href="/docs"
             >
-              DB {dbOk ? "ok" : "down"}
-            </span>
-          ) : null}
-          <button
-            className="text-slate-500 text-xs hover:text-slate-800"
-            onClick={() => void refreshHealth()}
-            type="button"
-          >
-            Refresh
-          </button>
-          <a
-            className="text-slate-400 text-[10px] hover:text-slate-600"
-            href={apiBaseUrl}
-            rel="noopener noreferrer"
-            target="_blank"
-          >
-            API
-          </a>
+              Architecture &amp; docs
+            </Link>
+            <button
+              className="rounded-lg border border-slate-200 bg-white px-4 py-2 font-medium text-slate-700 text-sm hover:bg-slate-50"
+              onClick={() => void refreshHealth()}
+              type="button"
+            >
+              Refresh status
+            </button>
+            <a
+              className="rounded-lg px-3 py-2 text-slate-500 text-sm hover:text-slate-800"
+              href={apiBaseUrl}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              Open API
+            </a>
+          </div>
+          <p className="max-w-md text-right text-slate-600 text-sm leading-relaxed">
+            {apiReachable ? (
+              <>
+                <span className="font-medium text-emerald-700">API reachable</span>
+                <span className="text-slate-400"> · </span>
+                <span
+                  className={
+                    dbOk ? "font-medium text-emerald-700" : "font-medium text-amber-800"
+                  }
+                >
+                  {dbOk ? "Database OK" : "Database issue"}
+                </span>
+                {queueLabel ? (
+                  <>
+                    <span className="text-slate-400"> · </span>
+                    <span className="text-slate-600">{queueLabel}</span>
+                  </>
+                ) : null}
+                {apiReachable && health?.redis === "error" ? (
+                  <>
+                    <span className="text-slate-400"> · </span>
+                    <span className="font-medium text-red-700">
+                      Redis connection error
+                    </span>
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <span className="font-medium text-red-700">API unreachable</span>
+            )}
+          </p>
         </div>
       </header>
 
       {!apiReachable || (apiReachable && !dbOk) ? (
-        <div className="shrink-0 px-3 pt-2">
+        <div className="shrink-0 px-4 pt-3">
           <CompactDevHint showDb={apiReachable && !dbOk} />
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-2">
-        <div className="flex h-full min-h-0 min-w-[1040px] gap-2">
-          <StudioColumn bodyScroll={false} title="Live chunk">
-            <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-              <p className="mb-2 shrink-0 text-[10px] text-slate-500 leading-snug">
-                Mic + 5s sliding window →{" "}
-                <code className="rounded bg-slate-100 px-0.5">
-                  OPENAI_API_KEY
-                </code>
-              </p>
-              <ChunkedTranscriptionPanel
-                apiBaseUrl={apiBaseUrl}
-                apiReachable={apiReachable}
-                className="min-h-0 min-w-0 flex-1"
-                dense
-                disabled={busy}
-              />
+      <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden p-4">
+        <div className="mx-auto flex h-full min-h-0 min-w-[min(100%,52rem)] max-w-6xl gap-6">
+          <StudioColumn bodyScroll={false} title="Live">
+            <div className="mb-4 flex shrink-0 gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1">
+              <button
+                className={`flex-1 rounded-lg px-4 py-2.5 font-medium text-sm transition ${
+                  liveMode === "chunk"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+                onClick={() => setLiveMode("chunk")}
+                type="button"
+              >
+                Live chunk
+              </button>
+              <button
+                className={`flex-1 rounded-lg px-4 py-2.5 font-medium text-sm transition ${
+                  liveMode === "whisper"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+                onClick={() => setLiveMode("whisper")}
+                type="button"
+              >
+                Single Whisper
+              </button>
             </div>
-          </StudioColumn>
 
-          <StudioColumn bodyScroll={false} title="Single (Whisper)">
-            <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-              <p className="mb-2 shrink-0 text-[10px] text-slate-500 leading-snug">
-                One take → full file{" "}
-                <code className="rounded bg-slate-100 px-0.5">whisper-1</code>
-              </p>
-              <canvas
-                className="mb-2 h-20 w-full shrink-0 rounded border border-slate-200 bg-slate-50"
-                height={80}
-                ref={canvasRef}
-                width={320}
-              />
-              <div className="mb-2 flex shrink-0 flex-wrap gap-1">
-                {!recording ? (
-                  <Button
-                    disabled={busy}
-                    onClick={() => void startRecording()}
-                    size="sm"
-                    type="button"
-                  >
-                    Record
-                  </Button>
-                ) : (
-                  <Button
-                    disabled={busy}
-                    onClick={() => void stopRecording()}
-                    size="sm"
-                    type="button"
-                    variant="destructive"
-                  >
-                    Stop + transcribe
-                  </Button>
-                )}
-                {whisperLoading ? (
-                  <span className="self-center text-slate-500 text-xs">
-                    …
-                  </span>
-                ) : null}
-              </div>
-              <div className="flex min-h-0 flex-1 flex-col gap-2">
-                <div className="flex min-h-0 flex-1 flex-col rounded border border-slate-200 bg-slate-50/80 p-2">
-                  <h3 className="shrink-0 font-medium text-slate-600 text-[10px] uppercase">
-                    Browser caption
-                  </h3>
-                  <p className="mt-1 min-h-0 flex-1 overflow-y-auto text-[11px] text-slate-800 leading-snug">
-                    {liveCaption || (
-                      <span className="text-slate-400">
-                        {recording ? "Listening…" : "Chrome / Edge interim."}
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <div className="flex min-h-0 flex-1 flex-col rounded border border-slate-200 bg-slate-50/80 p-2">
-                  <h3 className="shrink-0 font-medium text-slate-600 text-[10px] uppercase">
-                    Whisper
-                  </h3>
-                  <p className="mt-1 min-h-0 flex-1 overflow-y-auto text-[11px] text-slate-800 leading-snug">
-                    {whisperText || (
-                      <span className="text-slate-400">After stop.</span>
-                    )}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </StudioColumn>
-
-          <StudioColumn bodyScroll={false} title="Upload">
-            <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-              <p className="mb-2 shrink-0 text-[10px] text-slate-500 leading-snug">
-                File →{" "}
-                <code className="rounded bg-slate-100 px-0.5">whisper-1</code>
-              </p>
-              <input
-                accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg,.flac,.mpeg,.mp4"
-                className="sr-only"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  setUploadFile(f ?? null);
-                  setUploadTranscript("");
-                  setWhisperStatus(f ? `Selected: ${f.name}` : null);
-                }}
-                ref={fileInputRef}
-                type="file"
-              />
-              <div className="mb-2 flex shrink-0 flex-wrap gap-1">
-                <Button
+            {liveMode === "chunk" ? (
+              <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+                <p className="mb-3 shrink-0 text-slate-600 text-sm leading-relaxed">
+                  Microphone → 1 s audio frames → 5 s rolling window →
+                  transcription → merged text below.
+                </p>
+                <ChunkedTranscriptionPanel
+                  apiBaseUrl={apiBaseUrl}
+                  apiReachable={apiReachable}
+                  className="min-h-0 min-w-0 flex-1"
+                  dense
                   disabled={busy}
-                  onClick={() => fileInputRef.current?.click()}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  File
-                </Button>
-                <Button
-                  disabled={!uploadFile || busy}
-                  onClick={() => void runFileTranscribe()}
-                  size="sm"
-                  type="button"
-                >
-                  Transcribe
-                </Button>
+                />
               </div>
-              {uploadFile ? (
-                <p className="mb-2 shrink-0 truncate font-mono text-slate-500 text-[10px]">
-                  {uploadFile.name} · {(uploadFile.size / 1024).toFixed(0)} KB
+            ) : (
+              <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+                <p className="mb-3 shrink-0 text-slate-600 text-sm leading-relaxed">
+                  Record one clip, then send the whole file as{" "}
+                  <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs">
+                    whisper-1
+                  </code>
+                  . Optional live captions in Chrome or Edge.
                 </p>
-              ) : null}
-              <div className="flex min-h-0 flex-1 flex-col rounded border border-slate-200 bg-slate-50/80 p-2">
-                <h3 className="shrink-0 font-medium text-slate-600 text-[10px] uppercase">
-                  Transcript
-                </h3>
-                <p className="mt-1 min-h-0 flex-1 overflow-y-auto text-[11px] text-slate-800 leading-snug">
-                  {uploadTranscript || (
-                    <span className="text-slate-400">
-                      Upload then transcribe.
-                    </span>
+                <canvas
+                  className="mb-4 h-28 w-full shrink-0 rounded-xl border border-slate-200 bg-slate-50"
+                  height={112}
+                  ref={canvasRef}
+                  width={640}
+                />
+                <div className="mb-4 flex shrink-0 flex-wrap gap-2">
+                  {!recording ? (
+                    <Button
+                      disabled={busy}
+                      onClick={() => void startRecording()}
+                      type="button"
+                    >
+                      Start recording
+                    </Button>
+                  ) : (
+                    <Button
+                      disabled={busy}
+                      onClick={() => void stopRecording()}
+                      type="button"
+                      variant="destructive"
+                    >
+                      Stop and transcribe
+                    </Button>
                   )}
-                </p>
+                  {whisperLoading ? (
+                    <span className="self-center text-slate-500 text-sm">
+                      Transcribing…
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex min-h-0 flex-1 flex-col gap-4">
+                  <div className="flex min-h-0 min-h-[8rem] flex-1 flex-col rounded-xl border border-slate-200 bg-slate-50/90 p-4">
+                    <h3 className="shrink-0 font-medium text-slate-700 text-xs uppercase tracking-wide">
+                      Browser caption
+                    </h3>
+                    <p className="mt-2 min-h-0 flex-1 overflow-y-auto text-slate-800 text-sm leading-relaxed">
+                      {liveCaption || (
+                        <span className="text-slate-400">
+                          {recording
+                            ? "Listening…"
+                            : "Interim text while recording (Chrome / Edge)."}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex min-h-0 min-h-[8rem] flex-1 flex-col rounded-xl border border-slate-200 bg-slate-50/90 p-4">
+                    <h3 className="shrink-0 font-medium text-slate-700 text-xs uppercase tracking-wide">
+                      Whisper result
+                    </h3>
+                    <p className="mt-2 min-h-0 flex-1 overflow-y-auto text-slate-800 text-sm leading-relaxed">
+                      {whisperText || (
+                        <span className="text-slate-400">
+                          Appears after you stop.
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </StudioColumn>
 
-          <StudioColumn title="Samples">
-            <p className="mb-2 text-[10px] text-slate-500 leading-snug">
-              <code className="rounded bg-slate-100 px-0.5">public/samples</code>
+          <StudioColumn title="Samples & upload">
+            <p className="mb-4 text-slate-600 text-sm leading-relaxed">
+              Try built-in clips or upload your own file. Use{" "}
+              <strong className="font-medium text-slate-800">Full</strong> for
+              one-shot Whisper,{" "}
+              <strong className="font-medium text-slate-800">Chunk</strong> for
+              the same sliding pipeline as live, or{" "}
+              <strong className="font-medium text-slate-800">Queue</strong> for
+              the async API path.
             </p>
-            <ul className="space-y-2">
+            <UploadAudioSection
+              apiBaseUrl={apiBaseUrl}
+              apiReachable={apiReachable}
+              lockHeldByOther={
+                activeOpId !== null && activeOpId !== UPLOAD_OP_ID
+              }
+              onBeginOperation={() => setActiveOpId(UPLOAD_OP_ID)}
+              onEndOperation={() =>
+                setActiveOpId((c) => (c === UPLOAD_OP_ID ? null : c))
+              }
+            />
+            <ul className="space-y-4">
               {AUDIO_SAMPLES.map((sample) => (
                 <SampleAudioCard
                   apiBaseUrl={apiBaseUrl}
                   apiReachable={apiReachable}
                   key={sample.id}
                   lockHeldByOther={
-                    sampleOpId !== null && sampleOpId !== sample.id
+                    activeOpId !== null && activeOpId !== sample.id
                   }
                   onAudioRef={(el) => {
                     if (el) {
@@ -634,9 +608,9 @@ export function StudioClient({
                       sampleAudioRefs.current.delete(sample.id);
                     }
                   }}
-                  onBeginOperation={() => setSampleOpId(sample.id)}
+                  onBeginOperation={() => setActiveOpId(sample.id)}
                   onEndOperation={() =>
-                    setSampleOpId((c) => (c === sample.id ? null : c))
+                    setActiveOpId((c) => (c === sample.id ? null : c))
                   }
                   onPlay={() => pauseOtherSamplePlayers(sample.id)}
                   sample={sample}
@@ -644,33 +618,12 @@ export function StudioClient({
               ))}
             </ul>
           </StudioColumn>
-
-          <StudioColumn title="Test">
-            <p className="mb-2 text-[10px] text-slate-500 leading-snug">
-              POST{" "}
-              <code className="rounded bg-slate-100 px-0.5">/api/chunks/upload</code>{" "}
-              · needs Postgres
-            </p>
-            <Button
-              className="mb-2"
-              disabled={chunkLoading}
-              onClick={() => void uploadSampleChunk()}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              {chunkLoading ? "Sending…" : "Send chunk ack"}
-            </Button>
-            {chunkStatus ? (
-              <p className="text-slate-600 text-[11px] leading-snug">{chunkStatus}</p>
-            ) : null}
-          </StudioColumn>
         </div>
       </div>
 
       {whisperStatus ? (
         <footer
-          className="shrink-0 truncate border-slate-200 border-t bg-white px-3 py-1 text-slate-600 text-xs"
+          className="shrink-0 border-slate-200 border-t bg-white px-4 py-3 text-slate-700 text-sm"
           role="status"
         >
           {whisperStatus}
@@ -682,16 +635,33 @@ export function StudioClient({
 
 function CompactDevHint({ showDb }: { showDb: boolean }) {
   return (
-    <div className="rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-700 leading-snug">
-      <span className="font-medium text-slate-900">
-        {showDb ? "DB unreachable" : "API unreachable"}
-      </span>
-      <span className="text-slate-600">
-        {" "}
-        · <code className="rounded bg-white px-0.5">npm run docker:db</code> ·
-        <code className="rounded bg-white px-0.5">db:push</code> ·
-        <code className="rounded bg-white px-0.5">npm run dev</code>
-      </span>
+    <div className="rounded-xl border border-slate-200 bg-amber-50/80 px-4 py-3 text-slate-800 text-sm leading-relaxed">
+      <p className="font-medium text-slate-900">
+        {showDb ? "Database unreachable" : "API unreachable"}
+      </p>
+      <p className="mt-1 text-slate-700">
+        Start Postgres with{" "}
+        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs">
+          npm run docker:db
+        </code>
+        , copy{" "}
+        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs">
+          apps/server/.env.example
+        </code>{" "}
+        to{" "}
+        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs">
+          .env
+        </code>
+        , run{" "}
+        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs">
+          npm run db:push
+        </code>
+        , then{" "}
+        <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs">
+          npm run dev
+        </code>
+        .
+      </p>
     </div>
   );
 }

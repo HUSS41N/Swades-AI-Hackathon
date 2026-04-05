@@ -1,4 +1,14 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -39,12 +49,15 @@ services:
     environment:
       # Overrides apps/server/.env so the container uses Compose Postgres, not localhost
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/attack_capital
+      REDIS_URL: redis://redis:6379
       API_PORT: 3000
       NODE_ENV: production
       WEB_ORIGIN: http://localhost:3001
     depends_on:
       db-migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
   web:
     build:

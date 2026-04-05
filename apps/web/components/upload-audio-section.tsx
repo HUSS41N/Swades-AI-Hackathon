@@ -1,7 +1,6 @@
 "use client";
 
 import { Button } from "@repo/ui/components/button";
-import type { AudioSample } from "@repo/ui/samples";
 import {
   SlidingWindowTranscriptionSession,
   audioBufferToSecondChunks,
@@ -20,28 +19,24 @@ import {
   useState,
 } from "react";
 
-type SampleAudioCardProps = {
-  sample: AudioSample;
+type UploadAudioSectionProps = {
   apiBaseUrl: string;
   apiReachable: boolean;
-  /** True when another sample holds the lock */
   lockHeldByOther: boolean;
   onBeginOperation: () => void;
   onEndOperation: () => void;
-  onPlay: () => void;
-  onAudioRef: (el: HTMLAudioElement | null) => void;
 };
 
-export function SampleAudioCard({
-  sample,
+export function UploadAudioSection({
   apiBaseUrl,
   apiReachable,
   lockHeldByOther,
   onBeginOperation,
   onEndOperation,
-  onPlay,
-  onAudioRef,
-}: SampleAudioCardProps) {
+}: UploadAudioSectionProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+
   const [fullText, setFullText] = useState("");
   const [fullError, setFullError] = useState<string | null>(null);
   const [fullLoading, setFullLoading] = useState(false);
@@ -69,35 +64,19 @@ export function SampleAudioCard({
   }, []);
 
   const runFullWhisper = useCallback(async () => {
-    if (
-      !apiReachable ||
-      lockHeldByOther ||
-      fullLoading ||
-      chunkFeeding ||
-      queueLoading
-    ) {
+    if (!file || !apiReachable || lockHeldByOther || fullLoading || chunkFeeding || queueLoading) {
       return;
     }
     onBeginOperation();
     setFullLoading(true);
     setFullError(null);
     setChunkError(null);
-
-    const audioUrl =
-      typeof window !== "undefined"
-        ? new URL(sample.publicPath, window.location.origin).href
-        : sample.publicPath;
-
+    setQueueError(null);
     try {
-      const res = await fetch(audioUrl);
-      if (!res.ok) {
-        throw new Error(`Could not load ${sample.filename}`);
-      }
-      const blob = await res.blob();
       const text = await transcribeAudioPost(
         apiBaseUrl,
-        blob,
-        sample.filename,
+        file,
+        file.name,
         TRANSCRIBE_MODEL_WHISPER,
       );
       setFullText(text);
@@ -112,29 +91,23 @@ export function SampleAudioCard({
     apiBaseUrl,
     apiReachable,
     chunkFeeding,
+    file,
     fullLoading,
     lockHeldByOther,
     onBeginOperation,
     onEndOperation,
     queueLoading,
-    sample.filename,
-    sample.publicPath,
   ]);
 
   const runChunkedMini = useCallback(async () => {
-    if (
-      !apiReachable ||
-      lockHeldByOther ||
-      fullLoading ||
-      chunkFeeding ||
-      queueLoading
-    ) {
+    if (!file || !apiReachable || lockHeldByOther || fullLoading || chunkFeeding || queueLoading) {
       return;
     }
     onBeginOperation();
     setChunkFeeding(true);
     setChunkError(null);
     setFullError(null);
+    setQueueError(null);
     setChunkUnstable("");
     setChunkStable("");
     setChunkRunId((n) => n + 1);
@@ -154,30 +127,21 @@ export function SampleAudioCard({
       return;
     }
 
-    const audioUrl =
-      typeof window !== "undefined"
-        ? new URL(sample.publicPath, window.location.origin).href
-        : sample.publicPath;
-
     try {
-      const res = await fetch(audioUrl);
-      if (!res.ok) {
-        throw new Error(`Could not load ${sample.filename}`);
-      }
-      const buf = await res.arrayBuffer();
+      const buf = await file.arrayBuffer();
       const decodeCtx = new AudioContextClass();
       let audio: AudioBuffer;
       try {
         audio = await decodeCtx.decodeAudioData(buf.slice(0));
       } catch {
         await decodeCtx.close().catch(() => undefined);
-        throw new Error("Could not decode audio");
+        throw new Error("Could not decode file");
       }
       await decodeCtx.close().catch(() => undefined);
 
       const chunks = audioBufferToSecondChunks(audio);
       if (chunks.length === 0) {
-        throw new Error("No full 1s segments");
+        throw new Error("No full 1s segments in file");
       }
 
       const session = new SlidingWindowTranscriptionSession({
@@ -213,23 +177,16 @@ export function SampleAudioCard({
     apiBaseUrl,
     apiReachable,
     chunkFeeding,
+    file,
     fullLoading,
     lockHeldByOther,
     onBeginOperation,
     onEndOperation,
     queueLoading,
-    sample.filename,
-    sample.publicPath,
   ]);
 
   const runQueuedTranscribe = useCallback(async () => {
-    if (
-      !apiReachable ||
-      lockHeldByOther ||
-      fullLoading ||
-      chunkFeeding ||
-      queueLoading
-    ) {
+    if (!file || !apiReachable || lockHeldByOther || fullLoading || chunkFeeding || queueLoading) {
       return;
     }
     onBeginOperation();
@@ -237,25 +194,13 @@ export function SampleAudioCard({
     setQueueError(null);
     setFullError(null);
     setChunkError(null);
-
-    const audioUrl =
-      typeof window !== "undefined"
-        ? new URL(sample.publicPath, window.location.origin).href
-        : sample.publicPath;
-
     try {
-      const res = await fetch(audioUrl);
-      if (!res.ok) {
-        throw new Error(`Could not load ${sample.filename}`);
-      }
-      const blob = await res.blob();
       const out = await transcribeAsyncPost(
         apiBaseUrl,
-        blob,
-        sample.filename,
+        file,
+        file.name,
         TRANSCRIBE_MODEL_WHISPER,
       );
-
       if (out.queued) {
         setQueueViaRedis(true);
         const text = await pollTranscribeJob(apiBaseUrl, out.jobId);
@@ -275,33 +220,51 @@ export function SampleAudioCard({
     apiBaseUrl,
     apiReachable,
     chunkFeeding,
+    file,
     fullLoading,
     lockHeldByOther,
     onBeginOperation,
     onEndOperation,
     queueLoading,
-    sample.filename,
-    sample.publicPath,
   ]);
 
   const busyHere = fullLoading || chunkFeeding || queueLoading;
-  const buttonsDisabled =
-    !apiReachable || lockHeldByOther || busyHere;
+  const buttonsDisabled = !apiReachable || lockHeldByOther || busyHere || !file;
 
   return (
-    <li className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
-      <span className="font-medium text-slate-900 text-base leading-snug">
-        {sample.title}
-      </span>
-      <audio
-        className="mt-1 w-full max-w-full"
-        controls
-        onPlay={onPlay}
-        preload="metadata"
-        ref={onAudioRef}
-        src={sample.publicPath}
+    <div className="mb-4 rounded-xl border border-dashed border-slate-300 bg-white p-4">
+      <p className="font-medium text-slate-800 text-base">Upload audio</p>
+      <p className="mt-1 text-slate-600 text-sm leading-relaxed">
+        Run full Whisper, the same chunked mini pipeline as samples, or the async
+        queue path (Redis when configured; otherwise inline).
+      </p>
+      <input
+        accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg,.flac,.mpeg,.mp4"
+        className="sr-only"
+        onChange={(e) => {
+          const f = e.target.files?.[0] ?? null;
+          setFile(f);
+          setFullText("");
+          setChunkUnstable("");
+          setChunkStable("");
+          setQueueText("");
+          setFullError(null);
+          setChunkError(null);
+          setQueueError(null);
+        }}
+        ref={fileInputRef}
+        type="file"
       />
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          disabled={!apiReachable || lockHeldByOther}
+          onClick={() => fileInputRef.current?.click()}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          Choose file
+        </Button>
         <Button
           disabled={buttonsDisabled}
           onClick={() => void runFullWhisper()}
@@ -330,6 +293,11 @@ export function SampleAudioCard({
           {queueLoading ? "Working…" : "Queue"}
         </Button>
       </div>
+      {file ? (
+        <p className="mt-2 truncate font-mono text-slate-600 text-sm">
+          {file.name} · {(file.size / 1024).toFixed(0)} KB
+        </p>
+      ) : null}
 
       <div className="mt-4 space-y-3 border-slate-200 border-t pt-4">
         {fullError ? (
@@ -344,20 +312,17 @@ export function SampleAudioCard({
         {fullText ? (
           <div
             className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-500"
-            key={`full-${String(fullReveal)}`}
+            key={`ufull-${String(fullReveal)}`}
           >
             <p className="font-medium text-slate-500 text-xs uppercase tracking-wide">
               Full file
             </p>
-            <p className="mt-1 max-h-40 overflow-y-auto text-slate-800 text-sm leading-relaxed">
+            <p className="mt-1 max-h-36 overflow-y-auto text-slate-800 text-sm leading-relaxed">
               {fullText}
             </p>
           </div>
         ) : null}
 
-        {chunkError ? (
-          <p className="text-red-600 text-sm leading-relaxed">{chunkError}</p>
-        ) : null}
         {queueError ? (
           <p className="text-red-600 text-sm leading-relaxed">{queueError}</p>
         ) : null}
@@ -370,21 +335,24 @@ export function SampleAudioCard({
         {queueText ? (
           <div
             className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-500"
-            key={`queue-${String(queueReveal)}`}
+            key={`uq-${String(queueReveal)}`}
           >
             <p className="font-medium text-slate-500 text-xs uppercase tracking-wide">
               {queueViaRedis ? "Queued (Redis → worker)" : "Queued (inline)"}
             </p>
-            <p className="mt-1 max-h-40 overflow-y-auto text-slate-800 text-sm leading-relaxed">
+            <p className="mt-1 max-h-36 overflow-y-auto text-slate-800 text-sm leading-relaxed">
               {queueText}
             </p>
           </div>
         ) : null}
 
+        {chunkError ? (
+          <p className="text-red-600 text-sm leading-relaxed">{chunkError}</p>
+        ) : null}
         {chunkUnstable || chunkStable || chunkFeeding ? (
           <div
             className="motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-500"
-            key={`chunk-${String(chunkRunId)}`}
+            key={`uchunk-${String(chunkRunId)}`}
           >
             <p className="font-medium text-slate-500 text-xs uppercase tracking-wide">
               Chunked (mini)
@@ -399,7 +367,7 @@ export function SampleAudioCard({
                 <p className="font-medium text-amber-900 text-xs uppercase">
                   Unstable
                 </p>
-                <p className="mt-1 max-h-28 overflow-y-auto text-slate-800 text-sm leading-relaxed">
+                <p className="mt-1 max-h-24 overflow-y-auto text-slate-800 text-sm leading-relaxed">
                   {chunkUnstable}
                 </p>
               </div>
@@ -409,7 +377,7 @@ export function SampleAudioCard({
                 <p className="font-medium text-emerald-900 text-xs uppercase">
                   Stable
                 </p>
-                <p className="mt-1 max-h-32 overflow-y-auto text-slate-800 text-sm leading-relaxed">
+                <p className="mt-1 max-h-28 overflow-y-auto text-slate-800 text-sm leading-relaxed">
                   {chunkStable}
                 </p>
               </div>
@@ -417,6 +385,6 @@ export function SampleAudioCard({
           </div>
         ) : null}
       </div>
-    </li>
+    </div>
   );
 }
