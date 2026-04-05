@@ -24,9 +24,15 @@ const queueCtx: TranscribeQueueContext | null = env.REDIS_URL
   ? connectRedis(env.REDIS_URL)
   : null;
 
-const corsOrigins = env.WEB_ORIGIN.split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+/** Comma-separated in WEB_ORIGIN; trailing slashes stripped for matching. */
+function parseCorsOrigins(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((origin) => origin.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+}
+
+const corsOrigins = parseCorsOrigins(env.WEB_ORIGIN);
 
 const app = new Hono();
 
@@ -34,7 +40,13 @@ app.use("*", logger());
 app.use(
   "*",
   cors({
-    origin: corsOrigins,
+    origin: (requestOrigin) => {
+      if (!requestOrigin) {
+        return null;
+      }
+      const normalized = requestOrigin.replace(/\/$/, "");
+      return corsOrigins.includes(normalized) ? requestOrigin : null;
+    },
     allowMethods: ["GET", "POST", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization"],
   }),

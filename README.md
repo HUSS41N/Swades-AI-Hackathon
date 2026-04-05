@@ -4,6 +4,153 @@ Monorepo for a **browser + API transcription studio**: live sliding-window chunk
 
 ---
 
+## How to run
+
+### Prerequisites
+
+- **Node.js** 20+ and **npm** (see root `package.json` for `packageManager`).
+- **Docker Desktop** (or compatible engine) if you use Compose for Postgres / full stack.
+
+### Option A: Local development (recommended first time)
+
+Do these steps **in order**:
+
+1. **Install dependencies** (from the repo root):
+
+   ```bash
+   npm install
+   ```
+
+2. **Server environment** — Copy the template and edit values:
+
+   ```bash
+   cp apps/server/.env.example apps/server/.env
+   ```
+
+   | Variable | Required | Notes |
+   |----------|----------|--------|
+   | `DATABASE_URL` | Yes | e.g. `postgresql://postgres:postgres@localhost:5432/attack_capital` for local Compose Postgres |
+   | `OPENAI_API_KEY` | Yes | For `/api/transcribe` and related routes |
+   | `WEB_ORIGIN` | Yes for browser CORS | Default `http://localhost:3001` matches the Next.js dev port |
+   | `REDIS_URL` | No | If set and reachable, async jobs use Redis; otherwise they run inline |
+   | `API_PORT` | No | Defaults to `3000` |
+
+3. **Web environment** — Point the UI at your API:
+
+   ```bash
+   cp apps/web/.env.example apps/web/.env.local
+   ```
+
+   Set `NEXT_PUBLIC_API_URL=http://localhost:3000` (no trailing slash).
+
+4. **Start PostgreSQL** (pick one):
+
+   - **Compose (Postgres only):** `npm run docker:db`
+   - **Full stack:** skip to [Option B: Docker Compose](#option-b-docker-compose-full-stack) instead.
+
+5. **Apply the database schema:**
+
+   ```bash
+   npm run db:push
+   ```
+
+6. **Start web + API together:**
+
+   ```bash
+   npm run dev
+   ```
+
+7. **Open the app**
+
+   - **Studio:** [http://localhost:3001](http://localhost:3001)
+   - **API health:** [http://localhost:3000/health](http://localhost:3000/health)
+   - **In-app architecture notes:** [http://localhost:3001/docs](http://localhost:3001/docs)
+
+**Transcription will not work** until `OPENAI_API_KEY` is set on the server. If `/health` shows a database error, confirm Postgres is up and `DATABASE_URL` matches.
+
+### Option B: Docker Compose (full stack)
+
+From the repo root:
+
+```bash
+docker compose up --build
+```
+
+This starts Postgres, optional Redis, migrations, the API, and the web app as defined in `docker-compose.yml`. Rebuild the **web** image if you change `NEXT_PUBLIC_API_URL` or `WEB_ORIGIN` baked into the build.
+
+### Option C: One app at a time
+
+```bash
+npm run dev:server   # API only (port from API_PORT, default 3000)
+npm run dev:web      # Next.js only (default 3001); still needs API URL in .env.local
+```
+
+### After it runs
+
+- Run **`npm run check-types`** before commits if you change shared packages.
+- Run **`npm exec -- ultracite fix`** (per `AGENTS.md`) to format/lint where configured.
+
+### Deploying (Vercel + Railway, etc.)
+
+Set **`WEB_ORIGIN`** on the API to your real frontend origin (comma-separated for multiple). Set **`NEXT_PUBLIC_API_URL`** on the frontend to the public API base URL. See [Production CORS](#production-cors-eg-vercel--railway) below.
+
+---
+
+## Architecture diagram
+
+High-level system (GitHub and many Markdown viewers render Mermaid):
+
+```mermaid
+flowchart TB
+  subgraph browser["Browser"]
+    WEB["Next.js studio\napps/web"]
+  end
+
+  subgraph api["API apps/server"]
+    HONO["Hono"]
+    WORKER["In-process queue worker\nwhen Redis is enabled"]
+    HONO --- WORKER
+  end
+
+  PG[("PostgreSQL\nschema + health")]
+  REDIS[("Redis\noptional queue")]
+  OAI[("OpenAI\naudio transcriptions")]
+
+  WEB -->|"fetch NEXT_PUBLIC_API_URL /health /api/transcribe"| HONO
+  HONO --> PG
+  HONO --> REDIS
+  HONO --> OAI
+```
+
+**Live chunking** (no Redis): the browser sends each 5 s window as its own HTTP `POST`; merging happens in the client.
+
+```mermaid
+flowchart LR
+  MIC["Mic / Web Audio"] --> CH["1 s PCM chunks"]
+  CH --> BUF["5 s sliding buffer\n3 s step, 2 s overlap"]
+  BUF --> WAV["WAV per window"]
+  WAV --> POST["POST /api/transcribe\nmini model"]
+  POST --> OAI2["OpenAI"]
+  OAI2 --> MERGE["Merge + dedupe\nin browser"]
+  MERGE --> UI["Transcript UI"]
+```
+
+**Async full-file jobs** (optional Redis):
+
+```mermaid
+flowchart TB
+  UI["Browser\nQueue button"] --> ASYNC["POST /api/transcribe/async"]
+  ASYNC --> DEC{Redis OK?}
+  DEC -->|Yes| Q["Enqueue job\n+ store payload"]
+  DEC -->|No| INLINE["Transcribe in request\nqueued: false"]
+  Q --> W2["Worker"]
+  W2 --> OAI3["OpenAI"]
+  UI --> POLL["GET /api/transcribe/jobs/:id"]
+  POLL --> STATUS["completed / failed"]
+```
+
+---
+
 ## What we built
 
 - **Live chunking** — Mic → 1 s PCM chunks → rolling 5 s window (3 s step, 2 s overlap) → `POST /api/transcribe` with `gpt-4o-mini-transcribe` → merge and dedupe in the browser. Unstable vs stable transcript UI with a small buffer visualizer.
@@ -16,9 +163,11 @@ Monorepo for a **browser + API transcription studio**: live sliding-window chunk
 
 ---
 
-## Architecture
+## Architecture (reference)
 
 ### Live chunking (real-time)
+
+ASCII summary (see Mermaid above):
 
 ```
 Microphone → Web Audio (1 s frames) → sliding 5×1 s buffer
@@ -63,42 +212,27 @@ Browser → POST /api/transcribe/async (multipart, same as sync)
 
 ---
 
-## Getting started
+## Production CORS (e.g. Vercel + Railway)
 
-```bash
-npm install
-```
+The API only reflects `Access-Control-Allow-Origin` for hosts listed in **`WEB_ORIGIN`** on the server. If the browser shows a CORS error, the frontend origin is missing from that list.
 
-### Database
+1. On **Railway** (or wherever the API runs), set `WEB_ORIGIN` to your **exact** frontend origin (scheme + host, no path):
 
-1. Start Postgres (e.g. `npm run docker:db` — postgres service from `docker-compose.yml` on `localhost:5432`, db `attack_capital`).
-2. Copy `apps/server/.env.example` → `apps/server/.env` and set `DATABASE_URL`.
-3. `npm run db:push`
+   ```bash
+   WEB_ORIGIN=https://your-app.vercel.app
+   ```
 
-### Run dev
+   Local and production together:
 
-```bash
-npm run dev
-```
+   ```bash
+   WEB_ORIGIN=http://localhost:3001,https://your-app.vercel.app
+   ```
 
-- Web: [http://localhost:3001](http://localhost:3001)
-- API: [http://localhost:3000](http://localhost:3000)
+2. On **Vercel**, set `NEXT_PUBLIC_API_URL` to your public API base URL (no trailing slash), e.g. `https://your-service.up.railway.app`.
 
-### OpenAI
+3. Redeploy the API after changing `WEB_ORIGIN`.
 
-In `apps/server/.env`:
-
-```bash
-OPENAI_API_KEY=sk-...
-```
-
-Optional queue:
-
-```bash
-REDIS_URL=redis://localhost:6379
-```
-
-**Never commit API keys.** Compose can load `apps/server/.env` into the `api` service; `DATABASE_URL` in Compose still targets the `postgres` service.
+Trailing slashes in `WEB_ORIGIN` entries are ignored when matching; use `https://` and the exact hostname the browser sends in the `Origin` header.
 
 ### Full stack in Docker
 
