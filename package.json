@@ -1,0 +1,29 @@
+{
+  "name": "attack-capital",
+  "private": true,
+  "packageManager": "npm@11.5.1",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "check-types": "turbo check-types",
+    "db:generate": "turbo run db:generate",
+    "db:push": "turbo run db:push",
+    "db:migrate": "turbo run db:migrate",
+    "db:studio": "turbo run db:studio",
+    "dev:web": "turbo dev --filter=web",
+    "dev:server": "turbo dev --filter=server",
+    "docker:db": "docker compose up -d postgres",
+    "samples:wav": "node scripts/generate-sample-wavs.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.3",
+    "turbo": "^2.5.0",
+    "typescript": "^5.8.2"
+  },
+  "overrides": {
+    "esbuild": "^0.25.0"
+  }
+}

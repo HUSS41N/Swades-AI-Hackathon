@@ -1,0 +1,28 @@
+{
+  "name": "@repo/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "scripts": {
+    "db:generate": "drizzle-kit generate --config drizzle.config.cjs",
+    "db:push": "drizzle-kit push --config drizzle.config.cjs",
+    "db:migrate": "drizzle-kit migrate --config drizzle.config.cjs",
+    "db:studio": "drizzle-kit studio --config drizzle.config.cjs",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.40.0",
+    "postgres": "^3.4.5"
+  },
+  "devDependencies": {
+    "@repo/config": "*",
+    "@types/node": "^22.13.10",
+    "dotenv": "^16.4.7",
+    "drizzle-kit": "^0.30.5",
+    "typescript": "^5.8.2"
+  }
+}

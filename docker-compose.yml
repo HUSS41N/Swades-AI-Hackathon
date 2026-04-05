@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: attack_capital
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d attack_capital"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  db-migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/attack_capital
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+      target: runner
+    env_file:
+      - path: apps/server/.env
+        required: false
+    ports:
+      - "3000:3000"
+    environment:
+      # Overrides apps/server/.env so the container uses Compose Postgres, not localhost
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/attack_capital
+      API_PORT: 3000
+      NODE_ENV: production
+      WEB_ORIGIN: http://localhost:3001
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3000
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
