@@ -1,4 +1,4 @@
-# Attack Capital — Recording & transcription studio
+# Voicify — Recording & transcription studio
 
 Monorepo for a **browser + API transcription studio**: live sliding-window chunking, single-take Whisper, built-in samples, file upload, and an **optional Redis-backed job queue** for async full-file jobs. PostgreSQL is used for health checks and a small chunk-ack demo schema. You can run locally with **`npm run dev`** or bring up **Postgres + Redis + API + web** with **Docker Compose** (`docker-compose.yml` at the repo root).
 
